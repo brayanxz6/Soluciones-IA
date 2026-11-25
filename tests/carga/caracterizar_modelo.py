@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Caracterización secuencial de latencia/precisión del motor ollama.
 
 Las peticiones se hacen UNA A UNA (sin concurrencia): los modelos locales
