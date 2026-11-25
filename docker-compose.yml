@@ -1,0 +1,88 @@
+name: clasificador-commits
+
+services:
+  db-ia:
+    image: postgres:16-alpine
+    container_name: db-ia
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-commits_db}
+      POSTGRES_USER: ${POSTGRES_USER:-admin_ia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+      # Leída por db/init.sql (\getenv) para crear el rol app_ia
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Define APP_DB_PASSWORD en .env}
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - max_connections=20
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - effective_cache_size=64MB
+    volumes:
+      - datos-pg:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    mem_limit: 192m
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - red-ia
+    # Sin "ports": la BD solo es accesible dentro de la red red-ia.
+
+  api-ia:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: clasificador-commits:latest
+    container_name: api-ia
+    restart: unless-stopped
+    depends_on:
+      db-ia:
+        condition: service_healthy
+    environment:
+      DB_HOST: db-ia
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-commits_db}
+      DB_USER: app_ia
+      DB_PASSWORD: ${APP_DB_PASSWORD}
+      OLLAMA_URL: ${OLLAMA_URL_DOCKER:-http://host.docker.internal:11434/api/generate}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:0.5b}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT:-60}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # necesario en Linux
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - red-ia
+
+networks:
+  red-ia:
+    driver: bridge
+
+volumes:
+  datos-pg:
